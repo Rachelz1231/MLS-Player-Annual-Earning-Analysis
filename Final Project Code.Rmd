@@ -1,0 +1,373 @@
+---
+output:
+  pdf_document: default
+title: "Final Project"
+author: "Yuchen Zeng"
+date: "16/12/2021"
+---
+# Setting up R
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+# For Box-cox
+library(tidyverse)
+library(car)
+library(MASS)
+library(trafo)
+```
+# Load datasets and clean data
+```{r, echo=FALSE, include=FALSE}
+data_player <- read.csv(file="all_players.csv", header=T) %>%
+    filter(Year == 2018) %>%
+    dplyr::select('Player','GP','GS','G', 'A','SHTS','SOG','FS','OFF')
+data_salary <- read.csv(file="MLS_Salaries.csv", header=T) %>%
+    filter(Season == 2018) %>%
+    mutate(Total.Compensation = as.double(Total.Compensation),
+        Player = paste(First.Name,Last.Name, sep=' ')) %>%
+    dplyr::select('Player','Total.Compensation')
+data <- merge(data_salary, data_player) %>% 
+    dplyr::select(Total.Compensation:OFF) %>%
+    rename(Salary = Total.Compensation)
+```
+# Split the data randomly into 60% training data and 40% validation data
+```{r, echo=FALSE, include=FALSE}
+set.seed(1)
+train_size <- floor(0.60 * nrow(data))
+train_ind <- sample(seq_len(nrow(data)), size = train_size)
+train <- data[train_ind, ]
+test <- data[-train_ind,]
+```
+# Exploratory Data Analysis
+```{r, echo=FALSE}
+# There is no missing information in train - Complete case does no effect
+train <- train[complete.cases(train),]
+# Generate boxplots of GP, GS, G, A, SHTS, SOG, FS, and OFF with mean as a red line.   
+par(mfrow=c(3,4))
+hist(train$Salary, main = 'Histogram of Salary', xlab = "value of Salary")
+boxplot(train$Salary, main = 'Boxplot of Salary', ylab = "value of Salary")
+abline(h=mean(train$Salary),col='red')
+hist(train$GP, main = 'Histogram of GP', xlab = "value of GP")
+boxplot(train$GP, main = 'Boxplot of GP', ylab = "value of GP")
+abline(h=mean(train$GP),col='red')
+hist(train$GS, main = 'Histogram of GS', xlab = "value of GS")
+boxplot(train$GS, main = 'Boxplot of GS', ylab = "value of GS")
+abline(h=mean(train$GS),col='red')
+hist(train$G, main = 'Histogram of G', xlab = "value of G")
+boxplot(train$G, main = 'Boxplot of G', ylab = "value of G")
+abline(h=mean(train$G),col='red')
+hist(train$A, main = 'Histogram of A', xlab = "value of A")
+boxplot(train$A, main = 'Boxplot of A', ylab = "value of A")
+abline(h=mean(train$A),col='red')
+hist(train$SHTS, main = 'Histogram of SHTS', xlab = "value of SHTS")
+boxplot(train$SHTS, main = 'Boxplot of SHTS', ylab = "value of SHTS")
+abline(h=mean(train$SHTS),col='red')
+hist(train$SOG, main = 'Histogram of SOG', xlab = "value of SOG")
+boxplot(train$SOG, main = 'Boxplot of SOG', ylab = "value of SOG")
+abline(h=mean(train$SOG),col='red')
+hist(train$FS, main = 'Histogram of FS', xlab = "value of FS")
+boxplot(train$FS, main = 'Boxplot of FS', ylab = "value of FS")
+abline(h=mean(train$FS),col='red')
+hist(train$OFF, main = 'Histogram of OFF', xlab = "value of OFF")
+boxplot(train$OFF, main = 'Boxplot of OFF', ylab = "value of OFF")
+abline(h=mean(train$OFF),col='red')
+
+hist(train$FS, main = 'Histogram of FS', xlab = "value of FS")
+boxplot(train$FS, main = 'Boxplot of FS', ylab = "value of FS")
+abline(h=mean(train$FS),col='red')
+
+hist(train$FS, main = 'Histogram of FS', xlab = "value of FS")
+boxplot(train$FS, main = 'Boxplot of FS', ylab = "value of FS")
+abline(h=mean(train$FS),col='red')
+
+hist(train$FS, main = 'Histogram of FS', xlab = "value of FS")
+boxplot(train$FS, main = 'Boxplot of FS', ylab = "value of FS")
+abline(h=mean(train$FS),col='red')
+# Create a description table of all variables. 
+summary(train)
+# Check correlation of variables
+pairs(~ GP + GS + G + A +SHTS + SOG + FS + OFF,data=train)
+```
+## Obtaining Final Model
+# Construct initial model
+```{r}
+init_model <- lm(Salary ~ GP + GS + G + A +SHTS + SOG + FS + OFF, data=train)
+summary(init_model)
+#Check condition1
+y_hat<-fitted(init_model)
+yi1 <- (train$Salary)
+plot(y_hat, yi1, xlim =c(0,2000000), ylim=c(0,2000000), xlab= "Fitted Value", ylab="Total.Compensation(Salary)")
+abline(a = 0, b = 1)
+lines(lowess((train$Salary) ~ fitted(init_model)), lty=2)
+#Check condition2
+pairs(~ GP + GS + G + A +SHTS + SOG + FS + OFF,data=train)
+```
+# Residual Plots and QQ plots
+```{r}
+# Residual versus Predictors
+par(mfrow=c(3,3))
+residual <- rstandard(init_model)
+plot(train$GP, residual, xlab = "GP")
+plot(train$GS, residual, xlab = "GS")
+plot(train$G, residual, xlab = "G")
+plot(train$A, residual, xlab = "A")
+plot(train$SHTS, residual, xlab = "SHTS")
+plot(train$SOG, residual, xlab = "SOG")
+plot(train$FS, residual, xlab = "FS")
+plot(train$OFF, residual, xlab = "OFF")
+plot(y_hat, residual, xlab = "fitted")
+```
+```{r}
+qqnorm(residual)
+qqline(residual)
+```
+# Box-Cox tranformation for predictors and response
+```{r}
+boxCox(init_model)
+?powerTransform
+p <- powerTransform(cbind(train[,1], train[,2]+0.5, train[,3]+0.5, train[,4]+0.5, train[,5]+0.5, train[,6]+0.5, train[,7]+0.5, train[,8]+0.5, train[,9]+0.5)~1)
+summary(p)
+```
+# Model after tranformation
+```{r}                                                                                              
+transformed_model <- lm(log(Salary) ~ log(GP+0.5) + log(GS+0.5) + log(G+0.5) + log(A+0.5) + log(SHTS+0.5) + log(SOG+0.5) + log(FS+0.5) + log(OFF+0.5), data=train)
+summary(transformed_model)
+#Check condition1
+y_hat<-fitted(transformed_model)
+yi1 <- log(train$Salary)
+plot(y_hat, yi1)
+abline(a = 0, b = 1)
+lines(lowess(log(train$Salary) ~ fitted(transformed_model)), lty=2)
+#Check condition2
+pairs(~ log(GP+0.5) + log(GS+0.5) + log(G+0.5) + log(A+0.5) + log(SHTS+0.5) + log(SOG+0.5) + log(FS+0.5) + log(OFF+0.5),data=train)
+```
+```{r}
+# Residual versus Predictors
+par(mfrow=c(3,3))
+residual <- rstandard(transformed_model)
+plot(train$GP, residual, xlab = "GP")
+plot(train$GS, residual, xlab = "GS")
+plot(train$G, residual, xlab = "G")
+plot(train$A, residual, xlab = "A")
+plot(train$SHTS, residual, xlab = "SHTS")
+plot(train$SOG, residual, xlab = "SOG")
+plot(train$FS, residual, xlab = "FS")
+plot(train$OFF, residual, xlab = "OFF")
+plot(y_hat, residual, xlab = "fitted")
+```
+```{r}
+qqnorm(residual)
+qqline(residual)
+```
+
+```{r}
+vif(transformed_model)
+par(mfrow=c(1,2))
+plot(log(train$GP+0.5), log(train$GS+0.5), xlab = "log(GP)", ylab = "log(GS)", main="log(GS) versus log(GS)")
+plot(log(train$SHTS+0.5), log(train$SOG+0.5), xlab = "log(SHTS)", ylab = "log(SOG)", main="log(SHTS) versus log(SOG)")
+```
+# Create a dataset of training set with tranformed variables
+```{r}
+new <- train
+new$GP <- log(train$GP+0.5)
+new$GS <- log(train$GS+0.5)
+new$SOG <- log(train$SOG+0.5)
+new$SHTS <- log(train$SHTS+0.5)
+new$G <- log(train$G+0.5)
+new$A <- log(train$A +0.5)
+new$FS <- log(train$FS +0.5)
+new$OFF <- log(train$OFF +0.5)
+```
+# A reduced model with multicollinear predictors removed
+```{r}
+reduced_model <- lm(log(Salary) ~ GS + G + A + OFF, data=new)
+summary(reduced_model)
+#Check condition1
+y_hat<-fitted(reduced_model)
+yi1 <- log(train$Salary)
+plot(y_hat, yi1)
+abline(a = 0, b = 1)
+lines(lowess(log(train$Salary) ~ fitted(reduced_model)), lty=2)
+#Check condition2
+pairs(~  GS + G + A + OFF,data=new)
+vif(reduced_model)
+```
+```{r}
+# Residual versus Predictors
+par(mfrow=c(2,3))
+residual <- rstandard(reduced_model)
+plot(train$GS, residual, xlab = "GP")
+plot(train$G, residual, xlab = "G")
+plot(train$A, residual, xlab = "A")
+plot(train$OFF, residual, xlab = "OFF")
+plot(y_hat, residual, xlab = "fitted")
+qqnorm(residual)
+qqline(residual)
+```
+# Stepwise selection based on Bayesian Information Criterion(BIC)
+```{r}
+stepAIC(lm(log(Salary) ~ ., data=new),
+  direction = "both", k=log(nrow(new)))
+```
+# (Without Multicollinearity) Stepwise selection based on Bayesian Information Criterion(BIC)
+```{r}
+new_removed <- new[,-c(2,6,7,8)]
+stepAIC(lm(log(Salary) ~ ., data=new_removed),
+  direction = "both", k=log(nrow(new_removed)))
+```
+```{r}
+model1 <- lm(log(Salary) ~ GS + G + GP, data=new)
+summary(model1)
+#Check condition1
+y_hat<-fitted(model1)
+yi1 <- log(train$Salary)
+plot(y_hat, yi1)
+abline(a = 0, b = 1)
+lines(lowess(log(train$Salary) ~ fitted(model1)), lty=2)
+#Check condition2
+pairs(~  GS + G + GP,data=new)
+vif(model1)
+```
+```{r}
+model2 <- lm(log(Salary) ~ GS + G, data=new)
+summary(model2)
+#Check condition1
+y_hat<-fitted(model2)
+yi1 <- log(new$Salary)
+plot(y_hat, yi1)
+abline(a = 0, b = 1)
+lines(lowess(log(new$Salary) ~ fitted(model2)), lty=2)
+#Check condition2
+pairs(~  GS + G,data=new)
+vif(model2)
+```
+```{r}
+anova(transformed_model, model1)
+anova(reduced_model, model2)
+anova(model1, model2)
+```
+```{r}
+par(mfrow=c(2,3))
+#Check condition1
+y_hat<-fitted(model2)
+yi1 <- log(new$Salary)
+plot(y_hat, yi1, xlab = "fitted value", ylab="response", main="fitted value v.s. response")
+abline(a = 0, b = 1)
+lines(lowess(log(new$Salary) ~ fitted(model2)), lty=2)
+#Check condition2
+plot(new$GS, new$G, xlab = "log(GS)", ylab="log(G)", main="log(GS) v.s. log(G)")
+# QQ plot
+residual <- rstandard(model2)
+qqnorm(residual)
+qqline(residual)
+# Residual versus Predictors
+plot(new$GS, residual, xlab = "log(GS)", main="log(GS) v.s. Residual")
+plot(new$G, residual, xlab = "log(G)", main="log(G) v.s. Residual")
+plot(y_hat, residual, xlab = "fitted", main="fitted value v.s. Residual")
+```
+
+
+```{r}
+# information from the model
+n <- length(log(new$Salary))
+p <- length(coef(model2))-1
+# calculate the leverage values and compare to cutoff
+h <- hatvalues(model2) 
+hcut <- 2*(p+1)/n
+# which observations are leverage points?
+leverage <- which(h > hcut) 
+# which observations are outliers?
+outlier <- which(residual < -4 | residual > 4)
+# No outliers
+# find the cooks distance and compare to cutoff
+Dcutoff <- qf(0.5, p+1, n-p-1) 
+D <- cooks.distance(model2) 
+w1 <- which(D > Dcutoff)
+# find the DFFITS and compare to cutoff
+DFFITScut <- 2*sqrt((p+1)/n)
+dfs <- dffits(model2)
+w2 <- which(abs(dfs) > DFFITScut) 
+# find the DFBETAS and compare to cutoff (notice the dimension of DFBETAS)
+DFBETAcut <- 2/sqrt(n)
+dfb <- dfbetas(model2)
+w3 <- which(abs(dfb[,1]) > DFBETAcut) 
+w4 <- which(abs(dfb[,2]) > DFBETAcut) 
+w5 <- which(abs(dfb[,3]) > DFBETAcut) 
+w <- unique(c(w2, w3, w4, w5))
+
+# plot for leverage points
+par(mfrow=c(2,2))
+plot(log(new[,1])~new[,3], main="log(Salary) vs log(GS)", xlab="log(GS)", ylab="log(Salary)") 
+points(log(new[leverage,1])~new[leverage,3], col="red", pch=19)
+plot(log(new[,1])~new[,4], main="log(Salary) vs log(G)", xlab="log(G)", ylab="log(Salary)") 
+points(log(new[leverage,1])~new[leverage,4], col="red", pch=19)
+# plot for outliers
+plot(log(new[,1])~new[,3], main="log(Salary) vs log(GS)", xlab="log(GS)", ylab="log(Salary)") 
+points(log(new[w,1])~new[w,3], col="red", pch=19)
+plot(log(new[,1])~new[,4], main="log(Salary) vs log(G)", xlab="log(G)", ylab="log(Salary)") 
+points(log(new[w,1])~new[w,4], col="red", pch=19)
+```
+# Validate Model
+```{r}
+test_model <- lm(log(Salary) ~ log(GS+0.5) + log(G+0.5), data=test)
+summary(test_model)
+# Check multicollinearity
+vif(test_model)
+
+par(mfrow=c(2,3))
+#Check condition1
+y_hat<-fitted(test_model)
+yi1 <- log(test$Salary)
+plot(y_hat, yi1, xlab = "fitted value", ylab="response", main="fitted value v.s. response")
+abline(a = 0, b = 1)
+lines(lowess(log(test$Salary) ~ fitted(test_model)), lty=2)
+#Check condition2
+plot(log(test$GS+0.5), log(test$G+0.5), xlab = "log(GS)", ylab="log(G)", main="log(GS) v.s. log(G)")
+# Residual versus Predictors
+residual_test <- rstandard(test_model)
+plot(log(test$GS+0.5), residual_test, xlab = "log(GS)", main="log(GS) v.s. Residual")
+plot(log(test$G+0.5), residual_test, xlab = "log(G)", main="log(G) v.s. Residual")
+plot(y_hat, residual_test, xlab = "fitted", main="fitted value v.s. Residual")
+# QQ plot
+qqnorm(residual_test)
+qqline(residual_test)
+```
+```{r}
+# information from the model
+n <- length(log(test$Salary))
+p <- length(coef(test_model))-1
+# calculate the leverage values and compare to cutoff
+h <- hatvalues(test_model) 
+hcut <- 2*(p+1)/n
+# which observations are leverage points?
+leverage_test <- which(h > hcut) 
+# which observations are outliers?
+outlier_test <- which(residual_test < -4 | residual_test > 4)
+# No outliers
+# find the cooks distance and compare to cutoff
+Dcutoff <- qf(0.5, p+1, n-p-1) 
+D <- cooks.distance(test_model) 
+w1 <- which(D > Dcutoff)
+# find the DFFITS and compare to cutoff
+DFFITScut <- 2*sqrt((p+1)/n)
+dfs <- dffits(test_model)
+w2 <- which(abs(dfs) > DFFITScut) 
+# find the DFBETAS and compare to cutoff (notice the dimension of DFBETAS)
+DFBETAcut <- 2/sqrt(n)
+dfb <- dfbetas(test_model)
+w3 <- which(abs(dfb[,1]) > DFBETAcut) 
+w4 <- which(abs(dfb[,2]) > DFBETAcut) 
+w5 <- which(abs(dfb[,3]) > DFBETAcut) 
+w_test <- unique(c(w2, w3, w4, w5))
+
+# plot for leverage points
+par(mfrow=c(2,2))
+plot(log(test[,1])~log(test[,3]+0.5), main="log(Salary) vs log(GS)", xlab="log(GS)", ylab="log(Salary)") 
+points(log(test[leverage_test,1])~log(test[leverage_test,3]+0.5), col="red", pch=19)
+plot(log(test[,1])~log(test[,4]+0.5), main="log(Salary) vs log(G)", xlab="log(G)", ylab="log(Salary)") 
+points(log(test[leverage_test,1])~log(test[leverage_test,4]+0.5), col="red", pch=19)
+# plot for outliers
+plot(log(test[,1])~log(test[,3]+0.5), main="log(Salary) vs log(GS)", xlab="log(GS)", ylab="log(Salary)") 
+points(log(test[w_test,1])~log(test[w_test,3]+0.5), col="red", pch=19)
+plot(log(test[,1])~log(test[,4]+0.5), main="log(Salary) vs log(G)", xlab="log(G)", ylab="log(Salary)") 
+points(log(test[w_test,1])~log(test[w_test,4]+0.5), col="red", pch=19)
+```
